@@ -61,6 +61,8 @@
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="/common.js"></script>
 <script>
+// 'screen' e 'stop' são nomes reservados do navegador: pega os elementos pelo id
+const scr = document.getElementById('screen'), stopBtn = document.getElementById('stop');
 const code = new URLSearchParams(location.search).get('c') || location.hash.slice(1);
 if (!code) { landing.hidden = false; } else { watch.hidden = false; start(); }
 
@@ -70,7 +72,7 @@ function start() {
   let peer, conn, retry, live = false, t0 = 0, timer;
 
   const setScreen = (title, text, dots) => {
-    screen.classList.remove('hide');
+    scr.classList.remove('hide');
     st.innerHTML = title + (dots ? '<span class="dots"></span>' : '');
     sp.textContent = text;
   };
@@ -82,7 +84,7 @@ function start() {
   };
   const goLive = (stream) => {
     live = true; v.srcObject = stream;
-    screen.classList.add('hide'); tag.hidden = false;
+    scr.classList.add('hide'); tag.hidden = false;
     badge.className = 'badge live'; badge.textContent = 'Ao vivo';
     v.play().catch(() => {});
     if (v.muted) unmute.hidden = false;

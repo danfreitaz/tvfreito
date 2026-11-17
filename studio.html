@@ -80,6 +80,8 @@
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="/common.js"></script>
 <script>
+// 'screen' e 'stop' são nomes reservados do navegador: pega os elementos pelo id
+const scr = document.getElementById('screen'), stopBtn = document.getElementById('stop');
 const rnd = () => Math.random().toString(36).slice(2, 8);
 let code = localStorage.getItem('tvf_code') || rnd();
 localStorage.setItem('tvf_code', code);
@@ -208,9 +210,9 @@ async function startLive() {
       }
       return;
     }
-    screen.classList.add('hide'); tag.hidden = false;
+    scr.classList.add('hide'); tag.hidden = false;
     badge.className = 'badge live'; badge.textContent = 'Ao vivo';
-    go.hidden = true; stop.hidden = false; swap.hidden = false;
+    go.hidden = true; stopBtn.hidden = false; swap.hidden = false;
     if (!t0) {
       t0 = Date.now(); clearInterval(timer);
       timer = setInterval(() => { const s = TVF.fmt(Math.floor((Date.now() - t0) / 1000)); up.textContent = dur.textContent = s; }, 1000);
@@ -231,13 +233,13 @@ function stopLive() {
     try { v.conn.open && v.conn.send({ type: 'status', live: false }); } catch (e) {}
     try { v.call && v.call.close(); } catch (e) {} v.call = null;
   }
-  screen.classList.remove('hide'); tag.hidden = true;
+  scr.classList.remove('hide'); tag.hidden = true;
   badge.className = 'badge'; badge.textContent = 'Offline';
-  go.hidden = false; stop.hidden = true; swap.hidden = true;
+  go.hidden = false; stopBtn.hidden = true; swap.hidden = true;
 }
 
 go.onclick = startLive;
-stop.onclick = stopLive;
+stopBtn.onclick = stopLive;
 swap.onclick = startLive;
 q.onchange = () => { for (const v of viewers.values()) boost(v.call); };
 copy.onclick = async () => {
