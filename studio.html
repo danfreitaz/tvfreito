@@ -148,11 +148,27 @@ async function boost(call) {
 
 async function capture() {
   const [h, fps] = q.value.split(',').map(Number);
-  const d = await navigator.mediaDevices.getDisplayMedia({
+  const base = {
     video: { height: { ideal: h }, frameRate: { ideal: fps, max: fps } },
-    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-    systemAudio: 'include', selfBrowserSurface: 'exclude', surfaceSwitching: 'include'
-  });
+    selfBrowserSurface: 'exclude', surfaceSwitching: 'include'
+  };
+  // 1) áudio limpo  2) áudio padrão  3) só vídeo (se o Windows não liberar o som)
+  const tries = [
+    { ...base, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, systemAudio: 'include' },
+    { ...base, audio: true, systemAudio: 'include' },
+    { ...base, audio: false }
+  ];
+  let d, err;
+  for (let i = 0; i < tries.length && !d; i++) {
+    try { d = await navigator.mediaDevices.getDisplayMedia(tries[i]); }
+    catch (e) {
+      err = e;
+      if (e.name === 'NotAllowedError' || e.name === 'AbortError') throw e; // usuário cancelou
+      TVF.toast(i === 0 ? 'O som do PC falhou. Escolha a tela de novo…' : 'Ainda sem som. Escolha a tela de novo (vai só o vídeo)');
+    }
+  }
+  if (!d) throw err;
+  if (!d.getAudioTracks().length && err) setTimeout(() => TVF.toast('Transmitindo sem som do PC. Dica: compartilhe uma aba do navegador, ela leva o som.'), 2600);
   const vt = d.getVideoTracks()[0];
   vt.contentHint = fps >= 60 ? 'motion' : 'detail';
   vt.onended = stopLive;
@@ -168,7 +184,7 @@ async function capture() {
       audio = dest.stream.getAudioTracks();
     } catch (e) { TVF.toast('Microfone bloqueado, indo só com o áudio da tela'); }
   }
-  if (!d.getAudioTracks().length && !mic.checked) TVF.toast('Sem áudio: marque “Compartilhar áudio” na próxima vez');
+  if (!d.getAudioTracks().length && !mic.checked && !err) TVF.toast('Sem áudio: marque “Compartilhar áudio” na próxima vez');
   return { d, stream: new MediaStream([vt, ...audio]) };
 }
 
