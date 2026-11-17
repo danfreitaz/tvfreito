@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TVFreito — Ao vivo</title>
+<meta name="description" content="TVFreito: abra o link e assista à transmissão ao vivo.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📺</text></svg>">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <a class="logo" href="/"><i>▶</i>TV<b>FREITO</b></a>
+  <nav><a class="on" href="#">Assistir</a><a href="/studio">Estúdio</a></nav>
+</header>
+
+<main id="landing" hidden>
+  <section class="hero">
+    <div class="tv">📺</div>
+    <h1>TV<b>FREITO</b></h1>
+    <p>Sua tela, ao vivo, num link. Abra o estúdio, compartilhe a tela e mande o link pra quem quiser assistir.</p>
+    <a class="btn blue" style="display:inline-flex;align-items:center" href="/studio">Abrir estúdio</a>
+  </section>
+</main>
+
+<main id="watch" hidden>
+  <div class="row">
+    <div>
+      <h1>Transmissão ao vivo</h1>
+      <div class="sub" id="sub">Canal <span id="chan"></span></div>
+    </div>
+    <span class="badge" id="badge">Offline</span>
+  </div>
+
+  <div class="player" id="player">
+    <video id="v" playsinline autoplay muted></video>
+
+    <div class="tag" id="tag" hidden><span class="badge live">Ao vivo</span><span class="chip" id="up">00:00</span></div>
+    <button class="btn unmute" id="unmute" hidden>🔊 Ativar som</button>
+
+    <div class="screen" id="screen">
+      <div>
+        <div class="tv">📺</div>
+        <h2 id="st">Conectando<span class="dots"></span></h2>
+        <p id="sp">Procurando a transmissão.</p>
+      </div>
+    </div>
+
+    <div class="bar">
+      <button class="ib" id="mute" title="Som">🔇</button>
+      <input type="range" id="vol" min="0" max="1" step="0.05" value="1">
+      <span class="sp"></span>
+      <button class="ib" id="fs" title="Tela cheia (F)">⛶ Tela cheia</button>
+    </div>
+  </div>
+  <p class="hint">Dica: clique duas vezes no vídeo ou aperte <b>F</b> para tela cheia.</p>
+</main>
+
+<footer>TVFREITO · transmissão direta navegador a navegador</footer>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="/common.js"></script>
+<script>
+const code = new URLSearchParams(location.search).get('c') || location.hash.slice(1);
+if (!code) { landing.hidden = false; } else { watch.hidden = false; start(); }
+
+function start() {
+  const hostId = TVF.prefix + code;
+  chan.textContent = code.toUpperCase();
+  let peer, conn, retry, live = false, t0 = 0, timer;
+
+  const setScreen = (title, text, dots) => {
+    screen.classList.remove('hide');
+    st.innerHTML = title + (dots ? '<span class="dots"></span>' : '');
+    sp.textContent = text;
+  };
+  const goOffline = (msg) => {
+    live = false; tag.hidden = true; unmute.hidden = true;
+    badge.className = 'badge'; badge.textContent = 'Offline';
+    v.srcObject = null; clearInterval(timer); t0 = 0;
+    setScreen(msg || 'Aguardando transmissão', 'A página entra sozinha assim que a transmissão começar.', true);
+  };
+  const goLive = (stream) => {
+    live = true; v.srcObject = stream;
+    screen.classList.add('hide'); tag.hidden = false;
+    badge.className = 'badge live'; badge.textContent = 'Ao vivo';
+    v.play().catch(() => {});
+    if (v.muted) unmute.hidden = false;
+    if (!t0) t0 = Date.now(); clearInterval(timer);
+    timer = setInterval(() => up.textContent = TVF.fmt(Math.floor((Date.now() - t0) / 1000)), 1000);
+  };
+  const schedule = (ms) => { clearTimeout(retry); retry = setTimeout(connect, ms); };
+
+  function connect() {
+    if (!peer || peer.destroyed) return;
+    if (peer.disconnected) { peer.reconnect(); return; }
+    const old = conn; conn = null;
+    try { old && old.close(); } catch (e) {}
+    const c = conn = peer.connect(hostId, { reliable: true });
+    c.on('open', () => { if (c === conn) clearTimeout(retry); });
+    c.on('data', (d) => {
+      if (c !== conn || !d) return;
+      if (d.type === 'status' && !d.live) goOffline();
+      if (d.type === 'since' && d.t) t0 = d.t;
+    });
+    c.on('close', () => { if (c !== conn) return; goOffline(); schedule(2500); });
+    c.on('error', () => { if (c === conn) schedule(3000); });
+    // se não abrir em 8s, tenta de novo
+    schedule(8000);
+  }
+
+  peer = new Peer(TVF.peerOpts);
+  peer.on('open', connect);
+  let cur = null;
+  peer.on('call', (call) => {
+    if (cur && cur !== call) { const o = cur; cur = call; try { o.close(); } catch (e) {} }
+    cur = call;
+    call.answer();
+    call.on('stream', (s) => { if (call === cur) goLive(s); });
+    call.on('close', () => { if (call === cur) { cur = null; goOffline(); } });
+  });
+  peer.on('disconnected', () => setTimeout(() => !peer.destroyed && peer.reconnect(), 1500));
+  peer.on('error', (e) => {
+    if (e.type === 'peer-unavailable') { goOffline(); schedule(4000); }
+    else if (['network', 'server-error', 'socket-error', 'socket-closed'].includes(e.type)) {
+      setScreen('Reconectando', 'A conexão oscilou, tentando de novo.', true); schedule(4000);
+    }
+  });
+
+  // som
+  const syncMute = () => { mute.textContent = v.muted || v.volume === 0 ? '🔇' : '🔊'; unmute.hidden = !live || !v.muted; };
+  unmute.onclick = () => { v.muted = false; v.play(); syncMute(); };
+  mute.onclick = () => { v.muted = !v.muted; syncMute(); };
+  vol.oninput = () => { v.volume = +vol.value; v.muted = v.volume === 0; syncMute(); };
+  v.addEventListener('volumechange', syncMute);
+
+  // tela cheia
+  const toggleFs = () => document.fullscreenElement ? document.exitFullscreen()
+    : (player.requestFullscreen ? player.requestFullscreen() : v.webkitEnterFullscreen && v.webkitEnterFullscreen());
+  fs.onclick = toggleFs; v.ondblclick = toggleFs;
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'f' || e.key === 'F') toggleFs();
+    if (e.key === 'm' || e.key === 'M') mute.onclick();
+  });
+
+  // barra some quando o mouse para
+  let idle; player.addEventListener('mousemove', () => {
+    player.classList.add('idle-off'); player.style.cursor = '';
+    clearTimeout(idle); idle = setTimeout(() => { player.classList.remove('idle-off'); if (live) player.style.cursor = 'none'; }, 2500);
+  });
+
+  goOffline('Conectando');
+  setScreen('Conectando', 'Procurando a transmissão.', true);
+}
+</script>
+</body>
+</html>

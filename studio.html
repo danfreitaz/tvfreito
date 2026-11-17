@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TVFreito — Estúdio</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <a class="logo" href="/"><i>▶</i>TV<b>FREITO</b></a>
+  <nav><a href="#" id="watchLink">Assistir</a><a class="on" href="/studio">Estúdio</a></nav>
+</header>
+
+<main>
+  <div class="row">
+    <div>
+      <h1>Estúdio</h1>
+      <div class="sub" id="net">Conectando ao servidor<span class="dots"></span></div>
+    </div>
+    <span class="badge" id="badge">Offline</span>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="player">
+        <video id="pv" playsinline autoplay muted></video>
+        <div class="screen" id="screen">
+          <div>
+            <div class="tv">🎬</div>
+            <h2>Pronto pra ir ao ar</h2>
+            <p>Clique em <b>Transmitir tela</b>. Pra mandar o som do PC, marque <b>“Compartilhar áudio”</b> na janela do navegador.</p>
+          </div>
+        </div>
+        <div class="tag" id="tag" hidden><span class="badge live">Ao vivo</span><span class="chip" id="up">00:00</span></div>
+      </div>
+      <div class="actions" style="margin-top:14px">
+        <button class="btn" id="go" disabled>▶ Transmitir tela</button>
+        <button class="btn red" id="stop" hidden>■ Encerrar</button>
+        <button class="btn ghost" id="swap" hidden>⇄ Trocar tela</button>
+      </div>
+    </div>
+
+    <aside style="display:flex;flex-direction:column;gap:18px">
+      <div class="card">
+        <h3>Link do canal</h3>
+        <div class="link">
+          <input id="url" readonly>
+          <button class="btn blue" id="copy">Copiar</button>
+        </div>
+        <p class="hint">O link é fixo. Quem já estiver com ele aberto entra sozinho quando você começar.</p>
+      </div>
+
+      <div class="card">
+        <h3>Agora</h3>
+        <div class="stats">
+          <div class="stat"><b id="cnt">0</b><span>Assistindo</span></div>
+          <div class="stat"><b id="dur">--:--</b><span>No ar</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Ajustes</h3>
+        <select id="q">
+          <option value="720,30">720p · 30 fps (leve)</option>
+          <option value="1080,30" selected>1080p · 30 fps</option>
+          <option value="1080,60">1080p · 60 fps (jogos)</option>
+        </select>
+        <label class="opt"><input type="checkbox" id="mic"> Incluir meu microfone</label>
+        <p class="hint">Cada pessoa recebe o vídeo direto do seu PC, então a sua internet de upload define quantos aguentam (dá bem pra uns 5 a 10).</p>
+        <button class="btn ghost" id="newcode" style="height:34px;font-size:13px;margin-top:8px">Gerar link novo</button>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer>TVFREITO · estúdio</footer>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="/common.js"></script>
+<script>
+const rnd = () => Math.random().toString(36).slice(2, 8);
+let code = localStorage.getItem('tvf_code') || rnd();
+localStorage.setItem('tvf_code', code);
+
+const link = () => location.origin + '/?c=' + code;
+const showLink = () => { url.value = link(); watchLink.href = link(); };
+showLink();
+
+let peer, out = null, display = null, micStream = null, actx = null, t0 = 0, timer;
+const viewers = new Map(); // id -> {conn, call}
+
+function openPeer() {
+  peer && !peer.destroyed && peer.destroy();
+  net.innerHTML = 'Conectando ao servidor<span class="dots"></span>';
+  peer = new Peer(TVF.prefix + code, TVF.peerOpts);
+  peer.on('open', () => { net.textContent = 'Canal ' + code.toUpperCase() + ' · pronto'; go.disabled = false; });
+  peer.on('connection', (conn) => {
+    conn.on('open', () => {
+      viewers.set(conn.peer, { conn });
+      conn.send({ type: 'status', live: !!out });
+      if (out) { conn.send({ type: 'since', t: t0 }); callViewer(conn.peer); }
+      count();
+    });
+    conn.on('close', () => drop(conn.peer));
+    conn.on('error', () => drop(conn.peer));
+  });
+  peer.on('disconnected', () => { net.innerHTML = 'Reconectando<span class="dots"></span>'; setTimeout(() => !peer.destroyed && peer.reconnect(), 1500); });
+  peer.on('error', (e) => {
+    if (e.type === 'unavailable-id') {
+      net.innerHTML = 'Canal ocupado (outra aba aberta?) · tentando de novo<span class="dots"></span>';
+      setTimeout(openPeer, 4000);
+    } else if (['network', 'server-error', 'socket-error', 'socket-closed'].includes(e.type)) {
+      net.innerHTML = 'Sem conexão com o servidor · tentando<span class="dots"></span>';
+      setTimeout(openPeer, 4000);
+    }
+  });
+}
+
+function drop(id) {
+  const v = viewers.get(id); if (!v) return;
+  try { v.call && v.call.close(); } catch (e) {}
+  viewers.delete(id); count();
+}
+function count() { cnt.textContent = viewers.size; }
+
+function callViewer(id) {
+  const v = viewers.get(id); if (!v || !out) return;
+  try { v.call && v.call.close(); } catch (e) {}
+  const call = peer.call(id, out);
+  v.call = call;
+  call.on('close', () => { if (v.call === call) v.call = null; });
+  // sobe o bitrate do vídeo pra ficar nítido
+  setTimeout(() => boost(call), 1500);
+}
+async function boost(call) {
+  const pc = call && call.peerConnection; if (!pc) return;
+  const [h, fps] = q.value.split(',').map(Number);
+  for (const s of pc.getSenders()) {
+    if (!s.track || s.track.kind !== 'video') continue;
+    const p = s.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+    p.encodings[0].maxBitrate = h >= 1080 ? (fps >= 60 ? 8e6 : 5e6) : 2.5e6;
+    p.encodings[0].maxFramerate = fps;
+    try { await s.setParameters(p); } catch (e) {}
+  }
+}
+
+async function capture() {
+  const [h, fps] = q.value.split(',').map(Number);
+  const d = await navigator.mediaDevices.getDisplayMedia({
+    video: { height: { ideal: h }, frameRate: { ideal: fps, max: fps } },
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    systemAudio: 'include', selfBrowserSurface: 'exclude', surfaceSwitching: 'include'
+  });
+  const vt = d.getVideoTracks()[0];
+  vt.contentHint = fps >= 60 ? 'motion' : 'detail';
+  vt.onended = stopLive;
+
+  let audio = d.getAudioTracks();
+  if (mic.checked) {
+    try {
+      micStream = micStream || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      actx = actx || new AudioContext();
+      const dest = actx.createMediaStreamDestination();
+      if (audio.length) actx.createMediaStreamSource(new MediaStream(audio)).connect(dest);
+      actx.createMediaStreamSource(micStream).connect(dest);
+      audio = dest.stream.getAudioTracks();
+    } catch (e) { TVF.toast('Microfone bloqueado, indo só com o áudio da tela'); }
+  }
+  if (!d.getAudioTracks().length && !mic.checked) TVF.toast('Sem áudio: marque “Compartilhar áudio” na próxima vez');
+  return { d, stream: new MediaStream([vt, ...audio]) };
+}
+
+async function startLive() {
+  try {
+    const { d, stream } = await capture();
+    const swapping = !!out;
+    if (display) display.getTracks().forEach(t => { t.onended = null; t.stop(); });
+    display = d; out = stream; pv.srcObject = stream;
+    if (swapping) {
+      // troca a tela sem derrubar quem está assistindo
+      for (const v of viewers.values()) {
+        const pc = v.call && v.call.peerConnection; if (!pc) { callViewer(v.conn.peer); continue; }
+        const senders = pc.getSenders();
+        let ok = true;
+        for (const tr of stream.getTracks()) {
+          const s = senders.find(x => x.track ? x.track.kind === tr.kind : false) || senders.find(x => !x.track);
+          if (s) s.replaceTrack(tr).catch(() => {}); else ok = false;
+        }
+        if (!ok) callViewer(v.conn.peer);
+      }
+      return;
+    }
+    screen.classList.add('hide'); tag.hidden = false;
+    badge.className = 'badge live'; badge.textContent = 'Ao vivo';
+    go.hidden = true; stop.hidden = false; swap.hidden = false;
+    if (!t0) {
+      t0 = Date.now(); clearInterval(timer);
+      timer = setInterval(() => { const s = TVF.fmt(Math.floor((Date.now() - t0) / 1000)); up.textContent = dur.textContent = s; }, 1000);
+    }
+    for (const id of viewers.keys()) { const v = viewers.get(id); v.conn.open && v.conn.send({ type: 'since', t: t0 }); callViewer(id); }
+  } catch (e) {
+    if (e.name !== 'NotAllowedError') TVF.toast('Não deu pra capturar a tela: ' + e.message);
+  }
+}
+
+function stopLive() {
+  if (display) display.getTracks().forEach(t => { t.onended = null; t.stop(); });
+  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  if (actx) { actx.close(); actx = null; }
+  display = null; out = null; pv.srcObject = null; t0 = 0;
+  clearInterval(timer); dur.textContent = '--:--'; up.textContent = '00:00';
+  for (const v of viewers.values()) {
+    try { v.conn.open && v.conn.send({ type: 'status', live: false }); } catch (e) {}
+    try { v.call && v.call.close(); } catch (e) {} v.call = null;
+  }
+  screen.classList.remove('hide'); tag.hidden = true;
+  badge.className = 'badge'; badge.textContent = 'Offline';
+  go.hidden = false; stop.hidden = true; swap.hidden = true;
+}
+
+go.onclick = startLive;
+stop.onclick = stopLive;
+swap.onclick = startLive;
+q.onchange = () => { for (const v of viewers.values()) boost(v.call); };
+copy.onclick = async () => {
+  try { await navigator.clipboard.writeText(link()); } catch (e) { url.select(); document.execCommand('copy'); }
+  TVF.toast('Link copiado! Agora é só mandar 📺');
+};
+url.onclick = () => url.select();
+newcode.onclick = () => {
+  if (out && !confirmSwap()) return;
+  code = rnd(); localStorage.setItem('tvf_code', code); showLink();
+  stopLive(); viewers.clear(); count(); go.disabled = true; openPeer();
+  TVF.toast('Link novo gerado. O antigo parou de funcionar.');
+};
+function confirmSwap() { return window.confirm('Isso encerra a transmissão e o link antigo deixa de funcionar. Continuar?'); }
+window.addEventListener('beforeunload', (e) => { if (out) { e.preventDefault(); e.returnValue = ''; } });
+
+if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+  net.textContent = 'Este navegador não compartilha tela. Use Chrome, Edge ou Firefox no computador.';
+} else openPeer();
+</script>
+</body>
+</html>
